@@ -1,6 +1,7 @@
 package com.ssk.myfinancehub.ui.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ssk.myfinancehub.data.database.FinanceDatabase
@@ -8,6 +9,7 @@ import com.ssk.myfinancehub.data.model.Budget
 import com.ssk.myfinancehub.data.model.BudgetSummary
 import com.ssk.myfinancehub.data.model.CategorySpending
 import com.ssk.myfinancehub.data.repository.BudgetRepository
+import com.ssk.myfinancehub.repository.SyncRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -18,12 +20,23 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
     
     private val repository: BudgetRepository
     private val transactionRepository: com.ssk.myfinancehub.data.repository.TransactionRepository
+    private val syncRepository: SyncRepository
     
     init {
         val database = FinanceDatabase.getDatabase(application)
         repository = BudgetRepository(database.budgetDao())
         transactionRepository = com.ssk.myfinancehub.data.repository.TransactionRepository(database.transactionDao())
+        syncRepository = SyncRepository.getInstance(transactionRepository, repository)
     }
+    
+    // Sync repository states
+    val syncStatus: StateFlow<String> = syncRepository.syncStatus
+    val isLoading: StateFlow<Boolean> = syncRepository.isLoading
+    val errorMessage: StateFlow<String?> = syncRepository.errorMessage
+    val isConnected: StateFlow<Boolean> = syncRepository.isConnected
+    val connectionError: StateFlow<String?> = syncRepository.connectionError
+    val lastSyncTime: StateFlow<String?> = syncRepository.lastSyncTime
+    val isEnabled: StateFlow<Boolean> = syncRepository.isEnabled
     
     private val _currentMonth = MutableStateFlow(Calendar.getInstance().get(Calendar.MONTH) + 1)
     private val _currentYear = MutableStateFlow(Calendar.getInstance().get(Calendar.YEAR))
@@ -100,8 +113,30 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
     fun insertBudget(budget: Budget) {
         viewModelScope.launch {
             try {
-                val id = repository.insertBudget(budget)
-                println("Budget inserted with ID: $id")
+                // First save locally
+                val localId = repository.insertBudget(budget)
+                println("Budget inserted locally with ID: $localId")
+                
+                // Then sync to Catalyst if enabled
+                if (syncRepository.isEnabled.value) {
+                    val result = syncRepository.createBudgetViaCatalyst(budget)
+                    result.fold(
+                        onSuccess = { syncedBudget ->
+                            // Update local record with ROWID and sync status
+                            repository.updateBudget(syncedBudget.copy(id = localId))
+                            Log.d("BudgetViewModel", "Budget synced to Catalyst with ROWID: ${syncedBudget.catalystRowId}")
+                        },
+                        onFailure = { error ->
+                            Log.e("BudgetViewModel", "Failed to sync budget to Catalyst: ${error.message}")
+                            // Mark budget as sync failed
+                            repository.updateBudget(budget.copy(
+                                id = localId,
+                                syncStatus = com.ssk.myfinancehub.data.model.SyncStatus.SYNC_FAILED
+                            ))
+                        }
+                    )
+                }
+                
                 // Refresh summaries
                 loadBudgetSummaries(_currentMonth.value, _currentYear.value)
             } catch (e: Exception) {
@@ -114,8 +149,29 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
     fun updateBudget(budget: Budget) {
         viewModelScope.launch {
             try {
+                // Update locally
                 repository.updateBudget(budget)
-                println("Budget updated: ${budget.category}")
+                println("Budget updated locally: ${budget.category}")
+                
+                // Sync to Catalyst if enabled and has ROWID
+                if (syncRepository.isEnabled.value && budget.catalystRowId != null) {
+                    val result = syncRepository.updateBudgetViaCatalyst(budget)
+                    result.fold(
+                        onSuccess = { syncedBudget ->
+                            // Update sync status
+                            repository.updateBudget(syncedBudget)
+                            Log.d("BudgetViewModel", "Budget updated in Catalyst")
+                        },
+                        onFailure = { error ->
+                            Log.e("BudgetViewModel", "Failed to update in Catalyst: ${error.message}")
+                            // Mark as sync pending
+                            repository.updateBudget(budget.copy(
+                                syncStatus = com.ssk.myfinancehub.data.model.SyncStatus.SYNC_FAILED
+                            ))
+                        }
+                    )
+                }
+                
                 // Refresh summaries
                 loadBudgetSummaries(_currentMonth.value, _currentYear.value)
             } catch (e: Exception) {
@@ -128,7 +184,27 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteBudget(budget: Budget) {
         viewModelScope.launch {
             try {
-                repository.deleteBudget(budget)
+                // Delete from Catalyst first if it has ROWID
+                if (syncRepository.isEnabled.value && budget.catalystRowId != null) {
+                    val result = syncRepository.deleteBudgetViaCatalyst(budget)
+                    result.fold(
+                        onSuccess = {
+                            // Delete locally after successful Catalyst deletion
+                            repository.deleteBudget(budget)
+                            Log.d("BudgetViewModel", "Budget deleted from both Catalyst and local")
+                        },
+                        onFailure = { error ->
+                            Log.e("BudgetViewModel", "Failed to delete from Catalyst: ${error.message}")
+                            // Still delete locally but mark as sync issue
+                            repository.deleteBudget(budget)
+                        }
+                    )
+                } else {
+                    // Just delete locally if no ROWID or sync disabled
+                    repository.deleteBudget(budget)
+                    Log.d("BudgetViewModel", "Budget deleted locally")
+                }
+                
                 println("Budget deleted: ${budget.category}")
                 // Refresh summaries
                 loadBudgetSummaries(_currentMonth.value, _currentYear.value)
@@ -174,5 +250,38 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
     // Helper function for testing
     fun refreshCurrentMonth() {
         loadBudgetSummaries(_currentMonth.value, _currentYear.value)
+    }
+    
+    // Sync-specific methods for handling cloud data
+    suspend fun insertBudgetFromSync(budget: Budget) {
+        // Insert/update budget from cloud sync without triggering another sync
+        try {
+            // Check if budget already exists by catalystRowId to avoid duplicates
+            val existingBudget = budget.catalystRowId?.let { 
+                repository.getBudgetByCatalystRowId(it) 
+            }
+            
+            if (existingBudget == null) {
+                // Insert new budget from cloud
+                repository.insertBudget(budget)
+                println("Inserted new budget from sync: ${budget.category} (ROWID: ${budget.catalystRowId})")
+            } else {
+                // Update existing budget if cloud version is newer
+                if (budget.lastSyncedAt != null && 
+                    (existingBudget.lastSyncedAt == null || 
+                     budget.lastSyncedAt!! > existingBudget.lastSyncedAt!!)) {
+                    val updatedBudget = budget.copy(id = existingBudget.id)
+                    repository.updateBudget(updatedBudget)
+                    println("Updated existing budget from sync: ${budget.category} (ROWID: ${budget.catalystRowId})")
+                } else {
+                    println("Skipped sync for budget ${budget.category} - local version is newer or same")
+                }
+            }
+            // Refresh summaries
+            loadBudgetSummaries(_currentMonth.value, _currentYear.value)
+        } catch (e: Exception) {
+            println("Failed to insert/update budget from sync: ${e.message}")
+            e.printStackTrace()
+        }
     }
 }

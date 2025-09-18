@@ -3,8 +3,10 @@ package com.ssk.myfinancehub.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -13,16 +15,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ssk.myfinancehub.data.model.Currency
 import com.ssk.myfinancehub.data.model.Transaction
 import com.ssk.myfinancehub.data.model.TransactionType
 import com.ssk.myfinancehub.ui.viewmodel.TransactionViewModel
 import com.ssk.myfinancehub.utils.CurrencyFormatter
+import com.ssk.myfinancehub.utils.CurrencyManager
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -31,7 +36,7 @@ import java.util.*
 @Composable
 fun AddEditTransactionScreen(
     transactionId: Long? = null,
-    viewModel: TransactionViewModel = viewModel(),
+    viewModel: TransactionViewModel,
     onNavigateBack: () -> Unit
 ) {
     var amount by remember { mutableStateOf("") }
@@ -39,10 +44,9 @@ fun AddEditTransactionScreen(
     var category by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var selectedDate by remember { mutableStateOf(Date()) }
-    var selectedCurrency by remember { mutableStateOf(Currency.DEFAULT) }
+    val selectedCurrency by CurrencyManager.selectedCurrency.collectAsStateWithLifecycle()
     var showDatePicker by remember { mutableStateOf(false) }
     var showCategoryDropdown by remember { mutableStateOf(false) }
-    var showCurrencyDropdown by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     
     val scope = rememberCoroutineScope()
@@ -81,11 +85,15 @@ fun AddEditTransactionScreen(
             )
         }
     ) { paddingValues ->
+        val scrollState = rememberScrollState()
+        
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp),
+                .verticalScroll(scrollState)
+                .padding(16.dp)
+                .imePadding(),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             // Transaction Type Toggle
@@ -137,33 +145,29 @@ fun AddEditTransactionScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Currency Selector
-                        Box {
-                            OutlinedButton(
-                                onClick = { showCurrencyDropdown = true },
-                                colors = ButtonDefaults.outlinedButtonColors()
+                        // Currency Display (Read-only)
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(selectedCurrency.code)
-                                Icon(
-                                    Icons.Default.ArrowDropDown,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
+                                Text(
+                                    text = selectedCurrency.symbol,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
-                            }
-                            
-                            DropdownMenu(
-                                expanded = showCurrencyDropdown,
-                                onDismissRequest = { showCurrencyDropdown = false }
-                            ) {
-                                Currency.values().forEach { currency ->
-                                    DropdownMenuItem(
-                                        text = { Text("${currency.code} (${currency.symbol})") },
-                                        onClick = {
-                                            selectedCurrency = currency
-                                            showCurrencyDropdown = false
-                                        }
-                                    )
-                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = selectedCurrency.code,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                         
@@ -310,7 +314,7 @@ fun AddEditTransactionScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Save Button
             Button(
@@ -363,31 +367,34 @@ fun AddEditTransactionScreen(
 
     // Date Picker Dialog
     if (showDatePicker) {
-        val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = selectedDate.time
-        )
+        val calendar = Calendar.getInstance().apply {
+            time = selectedDate
+        }
+        val year = calendar.get(Calendar.YEAR)
+        val month = calendar.get(Calendar.MONTH)
+        val day = calendar.get(Calendar.DAY_OF_MONTH)
         
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        datePickerState.selectedDateMillis?.let { millis ->
-                            selectedDate = Date(millis)
-                        }
+        // Use platform DatePickerDialog for better device compatibility
+        val context = androidx.compose.ui.platform.LocalContext.current
+        LaunchedEffect(showDatePicker) {
+            if (showDatePicker) {
+                val datePickerDialog = android.app.DatePickerDialog(
+                    context,
+                    { _, selectedYear, selectedMonth, selectedDay ->
+                        val calendar = Calendar.getInstance()
+                        calendar.set(selectedYear, selectedMonth, selectedDay)
+                        selectedDate = calendar.time
                         showDatePicker = false
-                    }
-                ) {
-                    Text("OK")
+                    },
+                    year,
+                    month,
+                    day
+                )
+                datePickerDialog.setOnDismissListener {
+                    showDatePicker = false
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) {
-                    Text("Cancel")
-                }
+                datePickerDialog.show()
             }
-        ) {
-            DatePicker(state = datePickerState)
         }
     }
 }

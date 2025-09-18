@@ -5,6 +5,7 @@ import com.ssk.myfinancehub.data.model.Transaction
 import com.ssk.myfinancehub.data.model.TransactionType
 import com.ssk.myfinancehub.data.model.CategorySpending
 import com.ssk.myfinancehub.data.model.MonthlySpending
+import com.ssk.myfinancehub.data.model.SyncStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -14,6 +15,9 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getTransactionById(id: Long): Transaction?
+
+    @Query("SELECT * FROM transactions WHERE catalystRowId = :catalystRowId")
+    suspend fun getTransactionByCatalystRowId(catalystRowId: String): Transaction?
 
     @Query("SELECT * FROM transactions WHERE type = :type ORDER BY date DESC")
     fun getTransactionsByType(type: TransactionType): Flow<List<Transaction>>
@@ -35,6 +39,10 @@ interface TransactionDao {
 
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteTransactionById(id: Long)
+
+    // Sync-related queries
+    @Query("SELECT * FROM transactions WHERE syncStatus = :syncStatus")
+    suspend fun getTransactionsBySyncStatus(syncStatus: SyncStatus): List<Transaction>
 
     // Analytics queries
     @Query("""

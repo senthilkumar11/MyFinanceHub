@@ -12,7 +12,10 @@ data class Transaction(
     val type: TransactionType,
     val category: String,
     val description: String,
-    val date: Date = Date()
+    val date: Date = Date(),
+    val catalystRowId: String? = null, // ROWID from Catalyst API
+    val syncStatus: SyncStatus = SyncStatus.LOCAL,
+    val lastSyncedAt: Date? = null
 )
 
 enum class TransactionType {

@@ -23,4 +23,14 @@ class Converters {
     fun toTransactionType(type: String): TransactionType {
         return TransactionType.valueOf(type)
     }
+
+    @TypeConverter
+    fun fromSyncStatus(status: SyncStatus): String {
+        return status.name
+    }
+
+    @TypeConverter
+    fun toSyncStatus(status: String): SyncStatus {
+        return SyncStatus.valueOf(status)
+    }
 }

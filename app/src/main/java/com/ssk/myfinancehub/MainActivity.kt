@@ -1,5 +1,6 @@
 package com.ssk.myfinancehub
 
+import android.app.Application
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,15 +19,25 @@ import androidx.navigation.compose.rememberNavController
 import com.ssk.myfinancehub.auth.AuthManager
 import com.ssk.myfinancehub.navigation.FinanceNavigation
 import com.ssk.myfinancehub.navigation.Screen
+import com.ssk.myfinancehub.repository.SyncRepository
 import com.ssk.myfinancehub.ui.navigation.BottomNavItem
 import com.ssk.myfinancehub.ui.navigation.BottomNavigationBar
 import com.ssk.myfinancehub.ui.theme.MyFinanceHubTheme
 import com.ssk.myfinancehub.ui.viewmodel.BudgetViewModel
 import com.ssk.myfinancehub.ui.viewmodel.TransactionViewModel
+import com.ssk.myfinancehub.ui.viewmodel.TransactionViewModelFactory
+import com.ssk.myfinancehub.utils.CurrencyManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Initialize CurrencyManager
+        CurrencyManager.initialize(this)
+        
         enableEdgeToEdge()
         setContent {
             MyFinanceHubTheme {
@@ -48,8 +59,13 @@ fun FinanceApp() {
     val isLoggedIn by authManager.isLoggedIn
     
     val navController = rememberNavController()
-    val transactionViewModel: TransactionViewModel = viewModel()
+    val transactionViewModel: TransactionViewModel = viewModel(
+        factory = TransactionViewModelFactory(context.applicationContext as Application)
+    )
     val budgetViewModel: BudgetViewModel = viewModel()
+    
+    // Initialize sync repository - will be created in ProfileScreen when needed
+    // No automatic sync - user can manually sync via profile screen
     
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route

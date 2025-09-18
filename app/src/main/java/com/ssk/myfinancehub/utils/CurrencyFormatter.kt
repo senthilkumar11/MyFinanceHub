@@ -6,8 +6,9 @@ import java.util.*
 
 object CurrencyFormatter {
     
-    fun format(amount: Double, currency: Currency = Currency.DEFAULT): String {
-        return when (currency) {
+    fun format(amount: Double, currency: Currency? = null): String {
+        val currencyToUse = currency ?: CurrencyManager.getCurrentCurrency()
+        return when (currencyToUse) {
             Currency.INR -> {
                 // Indian number formatting
                 val formatter = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
@@ -26,7 +27,7 @@ object CurrencyFormatter {
                 formatter.format(amount)
             }
             else -> {
-                "${currency.symbol}${String.format("%.2f", amount)}"
+                "${currencyToUse.symbol}${String.format("%.2f", amount)}"
             }
         }
     }
@@ -35,7 +36,8 @@ object CurrencyFormatter {
         return String.format("%.2f", amount)
     }
     
-    fun getSymbol(currency: Currency = Currency.DEFAULT): String {
-        return currency.symbol
+    fun getSymbol(currency: Currency? = null): String {
+        val currencyToUse = currency ?: CurrencyManager.getCurrentCurrency()
+        return currencyToUse.symbol
     }
 }

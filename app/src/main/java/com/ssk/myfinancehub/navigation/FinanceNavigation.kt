@@ -32,8 +32,8 @@ sealed class Screen(val route: String) {
 @Composable
 fun FinanceNavigation(
     navController: NavHostController,
-    viewModel: TransactionViewModel = viewModel(),
-    budgetViewModel: BudgetViewModel = viewModel(),
+    viewModel: TransactionViewModel,
+    budgetViewModel: BudgetViewModel,
     modifier: Modifier = Modifier,
     startDestination: String = Screen.Auth.route
 ) {
@@ -125,7 +125,9 @@ fun FinanceNavigation(
                     navController.navigate(Screen.Auth.route) {
                         popUpTo(0) { inclusive = true }
                     }
-                }
+                },
+                transactionViewModel = viewModel,
+                budgetViewModel = budgetViewModel
             )
         }
     }

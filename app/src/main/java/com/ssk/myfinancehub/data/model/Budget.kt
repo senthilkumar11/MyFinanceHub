@@ -13,7 +13,10 @@ data class Budget(
     val month: Int, // 1-12
     val year: Int,
     val createdDate: Date = Date(),
-    val isActive: Boolean = true
+    val isActive: Boolean = true,
+    val catalystRowId: String? = null, // ROWID from Catalyst API
+    val syncStatus: SyncStatus = SyncStatus.LOCAL,
+    val lastSyncedAt: Date? = null
 )
 
 data class BudgetSummary(

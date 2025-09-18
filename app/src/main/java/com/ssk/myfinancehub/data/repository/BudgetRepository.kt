@@ -4,6 +4,7 @@ import com.ssk.myfinancehub.data.dao.BudgetDao
 import com.ssk.myfinancehub.data.model.Budget
 import com.ssk.myfinancehub.data.model.BudgetSummary
 import com.ssk.myfinancehub.data.model.CategorySpending
+import com.ssk.myfinancehub.data.model.SyncStatus
 import kotlinx.coroutines.flow.Flow
 import java.util.*
 
@@ -18,6 +19,9 @@ class BudgetRepository(private val budgetDao: BudgetDao) {
         budgetDao.getBudgetForCategoryAndMonth(category, month, year)
     
     suspend fun getBudgetById(id: Long): Budget? = budgetDao.getBudgetById(id)
+    
+    suspend fun getBudgetByCatalystRowId(catalystRowId: String): Budget? = 
+        budgetDao.getBudgetByCatalystRowId(catalystRowId)
     
     suspend fun insertBudget(budget: Budget): Long {
         println("Inserting budget: ${budget.category}, amount: ${budget.budgetAmount}, month: ${budget.month}, year: ${budget.year}")
@@ -48,6 +52,9 @@ class BudgetRepository(private val budgetDao: BudgetDao) {
     suspend fun getBudgetSummaryForCategory(category: String, month: Int, year: Int): BudgetSummary? {
         val budget = getBudgetForCategoryAndMonth(category, month, year) ?: return null
         val spentAmount = getSpentAmountForCategory(category, month, year)
+        
+        // Debug: Show which budget is being used
+        println("Budget for summary - Category: ${budget.category}, Amount: ${budget.budgetAmount}, ID: ${budget.id}, RowID: ${budget.catalystRowId}, LastSynced: ${budget.lastSyncedAt}")
         
         // Debug: Check transactions for this category
         val monthStr = String.format("%02d", month)
@@ -105,5 +112,53 @@ class BudgetRepository(private val budgetDao: BudgetDao) {
     // Helper function to get budgets directly
     private suspend fun getBudgetsForMonthDirect(month: Int, year: Int): List<Budget> {
         return budgetDao.getBudgetsForMonthDirect(month, year)
+    }
+    
+    // Sync-related methods for enhanced sync strategies
+    suspend fun getAllSyncedBudgets(): List<Budget> = 
+        budgetDao.getBudgetsBySyncStatus(SyncStatus.SYNCED)
+    
+    suspend fun getFailedSyncBudgets(): List<Budget> = 
+        budgetDao.getBudgetsBySyncStatus(SyncStatus.SYNC_FAILED)
+    
+    suspend fun getPendingSyncBudgets(): List<Budget> = 
+        budgetDao.getBudgetsBySyncStatus(SyncStatus.SYNC_PENDING)
+    
+    // Method to clean up duplicate budgets for the same category/month/year
+    suspend fun cleanupDuplicateBudgets() {
+        try {
+            // Get all active budgets directly without Flow
+            val allBudgets = budgetDao.getAllActiveBudgetsDirect()
+            
+            // Group by category, month, year
+            val groupedBudgets = mutableMapOf<String, MutableList<Budget>>()
+            
+            allBudgets.forEach { budget ->
+                val key = "${budget.category}_${budget.month}_${budget.year}"
+                groupedBudgets.getOrPut(key) { mutableListOf() }.add(budget)
+            }
+            
+            // For each group with duplicates, keep the latest one and delete the rest
+            groupedBudgets.values.forEach { budgetList ->
+                if (budgetList.size > 1) {
+                    // Sort by lastSyncedAt (newest first), then by id (newest first)
+                    val sortedBudgets = budgetList.sortedWith(
+                        compareByDescending<Budget> { it.lastSyncedAt }
+                            .thenByDescending { it.id }
+                    )
+                    
+                    // Keep the first (newest) budget, delete the rest
+                    val toDelete = sortedBudgets.drop(1)
+                    if (toDelete.isNotEmpty()) {
+                        val idsToDelete = toDelete.map { it.id }
+                        budgetDao.deleteBudgetsByIds(idsToDelete)
+                        println("Cleaned up ${idsToDelete.size} duplicate budgets for ${sortedBudgets.first().category}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            println("Error cleaning up duplicate budgets: ${e.message}")
+            e.printStackTrace()
+        }
     }
 }
